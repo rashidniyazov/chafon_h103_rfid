@@ -1,21 +1,22 @@
 import 'package:chafon_h103_rfid/chafon_h103_rfid.dart';
 import 'package:flutter/material.dart';
-import 'package:collection/collection.dart';
 import 'package:flutter/services.dart';
 
-class Functions2Screen extends StatefulWidget {
-  const Functions2Screen({super.key});
+import 'device_scan_screen.dart';
+
+class Functions extends StatefulWidget {
+  const Functions({super.key});
 
   @override
-  State<Functions2Screen> createState() => _FunctionsScreenState();
+  State<Functions> createState() => _FunctionsState();
 }
 
-class _FunctionsScreenState extends State<Functions2Screen>
+class _FunctionsState extends State<Functions>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool isLoading = false;
   Map<String, Map<String, dynamic>> tagMap = {};
-  String lastTagInfo = 'Tag oxunmayıb';
+  String lastTagInfo = 'Tag not read';
   String log = '';
   String selectedMemoryBank = 'EPC';
   final memoryBankOptions = ['TID', 'EPC'];
@@ -37,9 +38,8 @@ class _FunctionsScreenState extends State<Functions2Screen>
         outputPower = config['power'];
       });
     } catch (e) {
-      debugPrint("\u{1F534} Konfiqurasiya oxunmadı: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Cihaz konfiqurasiyası oxunmadı: $e")),
+        SnackBar(content: Text("Failed to get device configuration: $e")),
       );
     } finally {
       setState(() => isLoading = false);
@@ -56,39 +56,35 @@ class _FunctionsScreenState extends State<Functions2Screen>
       );
 
       if (result == "flash_saved" || result == "params_saved_to_flash") {
-        debugPrint("✅ Parametrlər uğurla FLASH yaddaşa yazıldı");
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("✅ Parametrlər yadda saxlanıldı (FLASH)"),
+              content: Text("Parameters save FLASH"),
               backgroundColor: Colors.green,
             ),
           );
         }
       } else {
-        debugPrint("⚠️ Parametrlər yazıla bilmədi: $result");
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("⚠️ Parametrlər yazılmadı: $result"),
+              content: Text("Parameters not write: $result"),
               backgroundColor: Colors.orange,
             ),
           );
         }
       }
     } catch (e) {
-      debugPrint("❌ Yazı zamanı xəta: $e");
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ Xəta baş verdi: $e"),
+            content: Text("Error: $e"),
             backgroundColor: Colors.red,
           ),
         );
       }
     }
   }
-
 
   @override
   void initState() {
@@ -125,7 +121,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
 
         setState(() {
           lastTagInfo =
-              'Tək tag oxundu: \nEPC: ${epc.isEmpty ? "<boş>" : epc}\nData: $data\nStatus: $status';
+              'Single tag read: \nEPC: ${epc.isEmpty ? "<empty>" : epc}\nData: $data\nStatus: $status';
         });
       },
       onBatteryLevel: (map) {
@@ -135,10 +131,10 @@ class _FunctionsScreenState extends State<Functions2Screen>
         });
       },
       onBatteryTimeout: () {
-        print("⚠️ Batareya cavabı gəlmədi (timeout)");
+
       },
       onFlashSaved: () {
-        debugPrint("✅ FLASH yaddaşa yazıldı və cihaz yenidən başladı.");
+
       },
     );
   }
@@ -153,14 +149,14 @@ class _FunctionsScreenState extends State<Functions2Screen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Funksiyalar"),
+        title: const Text("Functions"),
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
-            Tab(icon: Icon(Icons.wifi), text: "Axınlı Oxuma"),
-            Tab(icon: Icon(Icons.radio_button_checked), text: "Tək Oxuma"),
-            Tab(icon: Icon(Icons.radar), text: "Radar Axtarış"),
-            Tab(icon: Icon(Icons.settings), text: "Parametrlər"),
+            Tab(icon: Icon(Icons.wifi), text: "Continuous Read "),
+            Tab(icon: Icon(Icons.radio_button_checked), text: "Single read"),
+            Tab(icon: Icon(Icons.radar), text: "Radar Search"),
+            Tab(icon: Icon(Icons.settings), text: "Settings"),
           ],
         ),
         actions: [
@@ -208,8 +204,8 @@ class _FunctionsScreenState extends State<Functions2Screen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text("RSSI: ${data['rssi']} dBm"),
-                        Text("Oxunma sayı: ${data['count']}"),
-                        Text("Son: ${data['lastSeen']}"),
+                        Text("Read Count: ${data['count']}"),
+                        Text("Last Seen: ${data['lastSeen']}"),
                       ],
                     ),
                   ),
@@ -227,13 +223,13 @@ class _FunctionsScreenState extends State<Functions2Screen>
                 onPressed: () async {
                   final result = await ChafonH103RfidService.startInventory();
                   setState(() {
-                    log = '📡 Başladı: $result';
+                    log = '📡 Started: $result';
                   });
                 },
               ),
               ElevatedButton.icon(
                 icon: const Icon(Icons.cleaning_services_rounded),
-                label: const Text("Təmizlə"),
+                label: const Text("Clear"),
                 onPressed: () => setState(() => tagMap.clear()),
               ),
               ElevatedButton.icon(
@@ -242,7 +238,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
                 onPressed: () async {
                   final result = await ChafonH103RfidService.stopInventory();
                   setState(() {
-                    log = '🛑 Dayandırıldı: $result';
+                    log = '🛑 Stopped: $result';
                   });
                 },
               ),
@@ -263,7 +259,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
         children: [
           ElevatedButton.icon(
             icon: const Icon(Icons.radio_button_checked),
-            label: const Text("Tək Tag Oxu"),
+            label: const Text("Read Single Tag"),
             onPressed: () async {
               await ChafonH103RfidService.readSingleTag(
                 bank: selectedMemoryBank,
@@ -272,7 +268,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
           ),
           const SizedBox(height: 20),
           const Text(
-            "Oxunan nəticə:",
+            "Read Result:",
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
@@ -291,7 +287,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
             items: memoryBankOptions.map((bank) {
               return DropdownMenuItem<String>(
                 value: bank,
-                child: Text("Yaddaş: $bank"),
+                child: Text("Memory Bank: $bank"),
               );
             }).toList(),
             onChanged: (value) {
@@ -317,9 +313,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
 
     void handleRadar(String epc, int rssi) {
       final strength = normalizeRssi(rssi);
-      print("📡 EPC=$epc | RADAR EPC=$radarEpc | Güc=$strength");
 
-      // ✅ Yalnız seçilmiş radar EPC üçün səs ver
       if (epc.toLowerCase() == radarEpc.toLowerCase()) {
         SystemSound.play(SystemSoundType.click);
 
@@ -338,8 +332,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
           lastRadarEpc = epc;
         });
       } else {
-        // ✅ Yoxla ki, progress və səs **yalnız düzgün EPC** üçün dəyişsin
-        debugPrint("⚠️ Uyğunsuz EPC, səs və progress dəyişmir: $epc");
+
       }
     }
 
@@ -381,7 +374,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
           TextField(
             controller: epcController,
             decoration: const InputDecoration(
-              labelText: "Axtarılacaq EPC",
+              labelText: "EPC to Search",
               border: OutlineInputBorder(),
             ),
           ),
@@ -393,7 +386,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
             backgroundColor: Colors.grey[300],
           ),
           const SizedBox(height: 12),
-          Text("Tapılan EPC: $lastRadarEpc"),
+          Text("Detected EPC: $lastRadarEpc"),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -401,12 +394,12 @@ class _FunctionsScreenState extends State<Functions2Screen>
               ElevatedButton.icon(
                 onPressed: isRadarActive ? null : startRadar,
                 icon: const Icon(Icons.location_searching),
-                label: const Text("Radar Başla"),
+                label: const Text("Start Radar"),
               ),
               ElevatedButton.icon(
                 onPressed: isRadarActive ? stopRadar : null,
                 icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text("Dayandır"),
+                label: const Text("Stop Radar"),
               ),
             ],
           ),
@@ -422,7 +415,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            "📶 Güc (Output Power)",
+            "📶 Output Power",
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           Slider(
@@ -436,7 +429,7 @@ class _FunctionsScreenState extends State<Functions2Screen>
           const SizedBox(height: 16),
           ElevatedButton.icon(
             icon: const Icon(Icons.save),
-            label: const Text("Parametrləri Yaz"),
+            label: const Text("Save Parameters"),
             onPressed: () async => await sendConfigToDevice(),
           ),
           const SizedBox(height: 16),
@@ -444,9 +437,26 @@ class _FunctionsScreenState extends State<Functions2Screen>
             onPressed: () async {
               await ChafonH103RfidService.getBatteryLevel();
             },
-            child: const Text("🔋 Batareya yoxla"),
+            child: const Text("🔋 Check Battery"),
           ),
           Text(log),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.link_off),
+            label: const Text("Disconnect"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            onPressed: () async {
+              await ChafonH103RfidService.disconnect();
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const DeviceScanScreen()),
+                      (route) => false, // bütün əvvəlki səhifələri sil
+                );
+              }
+            },
+          ),
         ],
       ),
     );
