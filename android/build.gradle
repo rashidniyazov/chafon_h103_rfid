@@ -17,7 +17,9 @@ rootProject.allprojects {
         google()
         mavenCentral()
         flatDir {
+            //java ucun
             //dirs 'libs'
+            //flutter ucun
             dirs project(':chafon_h103_rfid').file('libs')
         }
     }
@@ -68,5 +70,6 @@ dependencies {
     // Testlər
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.0.0")
+    //java ucun
     //implementation files('/Users/rashidniyazov/development/flutter/bin/cache/artifacts/engine/android-x64/flutter.jar')
 }

@@ -98,19 +98,19 @@ class ChafonH103RfidService {
   }
 
 
-  static Future<String?> sendAndSaveAllParams({required int power, required int region, required int qValue, required int session}) async {
+  static Future<String?> sendAndSaveAllParams({required int power}) async {
     try {
       final result = await _channel.invokeMethod<String>('sendAndSaveAllParams', {
         'power': power,
-        'region': region,
-        'qValue': qValue,
-        'session': session,
+        'region': 1,
+        'qValue': 4,
+        'session': 1,
       });
-      debugPrint("😂 sendAndSaveAllParams: $result");
-      debugPrint("😂 sendAndSaveAllParams: $power");
+      debugPrint("sendAndSaveAllParams: $result");
+      debugPrint("sendAndSaveAllParams: $power");
       return result;
     } catch (e) {
-      debugPrint("❌ sendAndSaveAllParams error: $e");
+      debugPrint("sendAndSaveAllParams error: $e");
       return null;
 }
   }

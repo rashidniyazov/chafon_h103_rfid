@@ -49,10 +49,7 @@ class _FunctionsState extends State<Functions>
   Future<void> sendConfigToDevice() async {
     try {
       final result = await ChafonH103RfidService.sendAndSaveAllParams(
-        power: outputPower!,
-        region: 1,
-        qValue: 4,
-        session: 1,
+        power: outputPower!
       );
 
       if (result == "flash_saved" || result == "params_saved_to_flash") {
