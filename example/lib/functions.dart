@@ -1,7 +1,6 @@
 import 'package:chafon_h103_rfid/chafon_h103_rfid.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import 'device_scan_screen.dart';
 
 class Functions extends StatefulWidget {
@@ -259,7 +258,7 @@ class _FunctionsState extends State<Functions>
             label: const Text("Read Single Tag"),
             onPressed: () async {
               await ChafonH103RfidService.readSingleTag(
-                bank: selectedMemoryBank,
+                //bank: selectedMemoryBank,
               );
             },
           ),

@@ -210,7 +210,7 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                             TagInfoBean tag = (TagInfoBean) obj;
                             if (tag.mEPCNum == null || tag.mEPCNum.length == 0) return;
 
-                            String epc = bytesToHex(tag.mEPCNum);
+                            String epc = bytesToHexString(tag.mEPCNum);
                             int rssi = tag.mRSSI;
 
                             if (radarActive && radarEpc != null && epc.equalsIgnoreCase(radarEpc)) {
@@ -244,8 +244,8 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                             int status = tagOp.mTagStatus;
                             Log.d("CHAFON_PLUGIN", "📛 TagOperationBean status: " + status);
 
-                            String epc = FormatUtil.bytesToHexString(tagOp.mEPCNum);
-                            String data = FormatUtil.bytesToHexString(tagOp.mData);
+                            String epc = bytesToHexString(tagOp.mEPCNum);
+                            String data = bytesToHexString(tagOp.mData);
 
                             Log.i("CHAFON_PLUGIN", "✅ EPC: " + epc + " | DATA: " + data);
 
@@ -509,85 +509,6 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
         }
     }
 
-    private void configureDeviceDefaults(int power, int region, int qValue, int session, MethodChannel.Result result) {
-        try {
-            Log.d("CHAFON_PLUGIN", "📦 Parametrlər hazırlanır...");
-
-            AllParamBean param = new AllParamBean();
-
-            // Sabit parametrlər (rəsmi APK ilə uyğun)
-            param.mAddr = 0x08;
-            param.mRFIDPRO = 0x00;
-            param.mWorkMode = 0x00;
-            param.mInterface = 0x01;
-            param.mBaudrate = 0x04;
-            param.mWGSet = 0x00;
-            param.mAnt = (byte) 0xFF;
-
-            // İstifadəçi seçimləri
-            param.mRfidPower = (byte) power;
-            param.mQValue = (byte) qValue;
-            param.mSession = (byte) session;
-            param.mInquiryArea = 0x01; // EPC
-            param.mAcsAddr = 0x00;
-            param.mAcsDataLen = 0x00;
-            param.mFilterTime = 0;
-            param.mTriggerTime = 0;
-            param.mBuzzerTime = 3;
-            param.mPollingInterval = 1;
-
-            // Region və frekans konfiqurasiyası
-            AllParamBean.RfidFreq freq = new AllParamBean.RfidFreq();
-            freq.mSTRATFREI = new byte[2];
-            freq.mSTRATFRED = new byte[2];
-            freq.mSTEPFRE = new byte[2];
-
-            if (region == 1) { // FCC (US)
-                freq.mREGION = 0x01;
-                freq.mSTRATFREI[0] = 0x03;
-                freq.mSTRATFREI[1] = (byte) 0x86;
-
-                freq.mSTRATFRED[0] = 0x02;
-                freq.mSTRATFRED[1] = (byte) 0xEE;
-
-                freq.mSTEPFRE[0] = 0x01;
-                freq.mSTEPFRE[1] = (byte) 0xF4;
-
-                freq.mCN = 0x32;
-            } else { // ETSI (EU)
-                freq.mREGION = 0x03;
-                freq.mSTRATFREI[0] = 0x03;
-                freq.mSTRATFREI[1] = (byte) 0x61;
-
-                freq.mSTRATFRED[0] = 0x00;
-                freq.mSTRATFRED[1] = (byte) 0x64;
-
-                freq.mSTEPFRE[0] = 0x00;
-                freq.mSTEPFRE[1] = (byte) 0xC8;
-
-                freq.mCN = 0x0F;
-            }
-
-            param.mRfidFreq = freq;
-
-            // Parametrlərdən komanda byte[] yığ
-            byte[] cmd = CmdBuilder.buildSetAllParamCmd(param);
-            Log.d("CHAFON_PLUGIN", "🧪 CMD: " + bytesToHex(cmd)); // DEBUG üçün
-
-            boolean sent = bleCore.writeData(SERVICE_UUID, WRITE_UUID, cmd);
-
-            if (sent) {
-                Log.d("CHAFON_PLUGIN", "✅ Parametrlər RAM-a yazıldı");
-                result.success("params_written_to_ram");
-            } else {
-                result.error("WRITE_FAILED", "Parametrlər RAM-a yazıla bilmədi", null);
-            }
-
-        } catch (Exception e) {
-            result.error("WRITE_EXCEPTION", "Xəta baş verdi: " + e.getMessage(), null);
-        }
-    }
-
     private void saveParamsToFlash(MethodChannel.Result result) {
         try {
             Log.d("CHAFON_PLUGIN", "💾 FLASH yaddaşa yazma əmri göndərilir...");
@@ -613,21 +534,6 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
         } catch (Exception e) {
             result.error("FLASH_EXCEPTION", "Xəta baş verdi: " + e.getMessage(), null);
-        }
-    }
-
-    private void rebootDevice(MethodChannel.Result result) {
-        try {
-            Log.d("CHAFON_PLUGIN", "🔁 Reboot əmri göndərilir...");
-            byte[] cmd = CmdBuilder.buildRebootCmd();
-            boolean sent = bleCore.writeData(SERVICE_UUID, WRITE_UUID, cmd);
-            if (sent) {
-                result.success("device_rebooted");
-            } else {
-                result.error("REBOOT_FAILED", "Reboot əmrini göndərmək alınmadı", null);
-            }
-        } catch (Exception e) {
-            result.error("REBOOT_EXCEPTION", "Xəta baş verdi: " + e.getMessage(), null);
         }
     }
 
@@ -669,7 +575,7 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
             // Əmri qur və yaz
             byte[] cmd = CmdBuilder.buildSetAllParamCmd(latestAllParam);
-            Log.d("CHAFON_PLUGIN", "🧪 CMD: " + bytesToHex(cmd));
+            Log.d("CHAFON_PLUGIN", "🧪 CMD: " + bytesToHexString(cmd));
 
             boolean sent = bleCore.writeData(SERVICE_UUID, WRITE_UUID, cmd);
 
@@ -685,7 +591,6 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
             result.error("WRITE_EXCEPTION", "Xəta baş verdi: " + e.getMessage(), null);
         }
     }
-
 
     private int calculateCRC16(byte[] data, int length) {
         int crc = 0xFFFF;
@@ -770,6 +675,15 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
     private String bytesToHex(byte[] bytes) {
         if (bytes == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02X", b));
+        }
+        return sb.toString();
+    }
+
+    public String bytesToHexString(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return "";
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02X", b));

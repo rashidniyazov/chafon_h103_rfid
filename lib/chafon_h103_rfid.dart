@@ -104,7 +104,7 @@ class ChafonH103RfidService {
         'power': power,
         'region': 1,
         'qValue': 4,
-        'session': 1,
+        'session': 0,
       });
       debugPrint("sendAndSaveAllParams: $result");
       debugPrint("sendAndSaveAllParams: $power");
@@ -130,8 +130,9 @@ class ChafonH103RfidService {
     return await _channel.invokeMethod<String>('stopInventory');
   }
 
-  static Future<String?> readSingleTag({required String bank}) async {
-    int memoryBank = (bank == 'TID') ? 0x02 : 0x01;
+  static Future<String?> readSingleTag() async {
+    int memoryBank = //(bank == 'TID') ? 0x02 :
+    0x01;
     return await _channel.invokeMethod('readSingleTag', {
       'memoryBank': memoryBank,
     });
