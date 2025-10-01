@@ -10,3 +10,6 @@
 ## 0.1.2
 - Change readSingleTag method
 - Change sendAndSaveAllParams method
+
+## 0.1.4
+- Change sendAndSaveAllParams method
