@@ -10,9 +10,9 @@ class Functions extends StatefulWidget {
   State<Functions> createState() => _FunctionsState();
 }
 
-class _FunctionsState extends State<Functions>
-    with SingleTickerProviderStateMixin {
+class _FunctionsState extends State<Functions> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+
   bool isLoading = false;
   Map<String, Map<String, dynamic>> tagMap = {};
   String lastTagInfo = 'Tag not read';
@@ -22,73 +22,113 @@ class _FunctionsState extends State<Functions>
   int? outputPower;
   int? batteryLevel;
 
-  TextEditingController epcController = TextEditingController();
+  final TextEditingController epcController = TextEditingController();
+
+  // Radar state
   double radarProgress = 0.0;
   Color radarColor = Colors.grey;
   String radarEpc = '';
   String lastRadarEpc = '';
   bool isRadarActive = false;
 
+  int _normalizePower(int? p) {
+    final v = (p == null || p == 0) ? 6 : p;
+    return v.clamp(5, 33);
+  }
+
+  int _memBankCode(String bank) {
+    switch (bank) {
+      case 'TID':
+        return 0x02;
+      case 'EPC':
+      default:
+        return 0x01;
+    }
+  }
+
+  int _normalizeRssi(int rssi, {int min = -90, int max = -40}) {
+    if (rssi < min) return 0;
+    if (rssi > max) return 100;
+    return ((rssi - min) * 100 / (max - min)).toInt();
+  }
+
+  void _handleRadar(String epc, int rssi) {
+    if (!isRadarActive || radarEpc.isEmpty) return;
+
+    final strength = _normalizeRssi(rssi);
+    if (epc.toLowerCase() == radarEpc.toLowerCase()) {
+      SystemSound.play(SystemSoundType.click);
+
+      Color color;
+      if (strength > 70) {
+        color = Colors.green;
+      } else if (strength > 40) {
+        color = Colors.yellow;
+      } else {
+        color = Colors.red;
+      }
+
+      setState(() {
+        radarProgress = strength / 100;
+        radarColor = color;
+        lastRadarEpc = epc;
+      });
+    }
+  }
+
   Future<void> loadDeviceConfig() async {
     setState(() => isLoading = true);
     try {
       final config = await ChafonH103RfidService.getAllDeviceConfig();
       setState(() {
-        outputPower = config['power'];
+        // plugin ETSI-də 5..33 dBm
+        outputPower = (config['power'] ?? 20).clamp(5, 33);
       });
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Failed to get device configuration: $e")),
       );
     } finally {
-      setState(() => isLoading = false);
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
   Future<void> sendConfigToDevice() async {
+    final power = _normalizePower(outputPower);
     try {
-      final result = await ChafonH103RfidService.sendAndSaveAllParams(
-        power: outputPower!
+      // Yalnız gücü yaz və FLASH-a saxla (inventory işləyirdisə özün bərpa etmirik – settings tabındayıq)
+      final result = await ChafonH103RfidService.setOnlyOutputPower(
+        power: power,
+        saveToFlash: true,
+        resumeInventory: false,
       );
 
-      if (result == "flash_saved" || result == "params_saved_to_flash") {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Parameters save FLASH"),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Parameters not write: $result"),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
+      if (!mounted) return;
+      if (result == "flash_saved" || result == "ok" || result == "params_saved_to_flash") {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Error: $e"),
-            backgroundColor: Colors.red,
-          ),
+          const SnackBar(content: Text("Parameters saved (FLASH)"), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Parameters not written: $result"), backgroundColor: Colors.orange),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+      );
     }
   }
 
   @override
   void initState() {
     super.initState();
-    loadDeviceConfig();
-    epcController = TextEditingController();
     _tabController = TabController(length: 4, vsync: this);
+    loadDeviceConfig();
 
+    // İlk callback init – təkrar init etməyək
     ChafonH103RfidService.initCallbacks(
       onTagRead: (tag) {
         final epc = tag['epc'];
@@ -116,9 +156,13 @@ class _FunctionsState extends State<Functions>
         if (data.trim().isEmpty) return;
 
         setState(() {
-          lastTagInfo =
-              'Single tag read: \nEPC: ${epc.isEmpty ? "<empty>" : epc}\nData: $data\nStatus: $status';
+          lastTagInfo = 'Single tag read:\nEPC: ${epc.isEmpty ? "<empty>" : epc}\nData: $data\nStatus: $status';
         });
+      },
+      onRadarResult: (tag) {
+        final epc = tag['epc'] ?? '';
+        final rssi = tag['rssi'] ?? -99;
+        _handleRadar(epc, rssi);
       },
       onBatteryLevel: (map) {
         final level = map['level'];
@@ -126,13 +170,12 @@ class _FunctionsState extends State<Functions>
           batteryLevel = level;
         });
       },
-      onBatteryTimeout: () {
-
-      },
-      onFlashSaved: () {
-
-      },
+      onBatteryTimeout: () {},
+      onFlashSaved: () {},
     );
+
+    // İstəyə görə açılışda batareya soruş
+    ChafonH103RfidService.getBatteryLevel();
   }
 
   @override
@@ -143,6 +186,7 @@ class _FunctionsState extends State<Functions>
 
   @override
   Widget build(BuildContext context) {
+    final powLabel = outputPower?.toString() ?? '...';
     return Scaffold(
       appBar: AppBar(
         title: const Text("Functions"),
@@ -167,13 +211,15 @@ class _FunctionsState extends State<Functions>
           ),
         ],
       ),
-      body: TabBarView(
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
         controller: _tabController,
         children: [
           _buildContinuousInventoryTab(),
           _buildSingleReadTab(),
           _buildRadarTab(),
-          _buildSettingsTab(),
+          _buildSettingsTab(powLabel),
         ],
       ),
     );
@@ -207,7 +253,7 @@ class _FunctionsState extends State<Functions>
                   ),
                 );
               },
-            )
+            ),
           ),
           const SizedBox(height: 12),
           Row(
@@ -257,16 +303,13 @@ class _FunctionsState extends State<Functions>
             icon: const Icon(Icons.radio_button_checked),
             label: const Text("Read Single Tag"),
             onPressed: () async {
-              await ChafonH103RfidService.readSingleTag(
-                //bank: selectedMemoryBank,
-              );
+              // Seçilən bankdan oxu
+              final bank = _memBankCode(selectedMemoryBank);
+              await ChafonH103RfidService.readSingleTagFromBank(bank);
             },
           ),
           const SizedBox(height: 20),
-          const Text(
-            "Read Result:",
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          const Text("Read Result:", style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Container(
             width: double.infinity,
@@ -280,17 +323,12 @@ class _FunctionsState extends State<Functions>
           const SizedBox(height: 20),
           DropdownButton<String>(
             value: selectedMemoryBank,
-            items: memoryBankOptions.map((bank) {
-              return DropdownMenuItem<String>(
-                value: bank,
-                child: Text("Memory Bank: $bank"),
-              );
-            }).toList(),
+            items: memoryBankOptions
+                .map((bank) => DropdownMenuItem<String>(value: bank, child: Text("Memory Bank: $bank")))
+                .toList(),
             onChanged: (value) {
               if (value != null) {
-                setState(() {
-                  selectedMemoryBank = value;
-                });
+                setState(() => selectedMemoryBank = value);
               }
             },
           ),
@@ -300,39 +338,6 @@ class _FunctionsState extends State<Functions>
   }
 
   Widget _buildRadarTab() {
-
-    int normalizeRssi(int rssi, {int min = -90, int max = -40}) {
-      if (rssi < min) return 0;
-      if (rssi > max) return 100;
-      return ((rssi - min) * 100 / (max - min)).toInt();
-    }
-
-    void handleRadar(String epc, int rssi) {
-      final strength = normalizeRssi(rssi);
-
-      if (epc.toLowerCase() == radarEpc.toLowerCase()) {
-        SystemSound.play(SystemSoundType.click);
-
-        Color color;
-        if (strength > 70) {
-          color = Colors.green;
-        } else if (strength > 40) {
-          color = Colors.yellow;
-        } else {
-          color = Colors.red;
-        }
-
-        setState(() {
-          radarProgress = strength / 100;
-          radarColor = color;
-          lastRadarEpc = epc;
-        });
-      } else {
-
-      }
-    }
-
-
     Future<void> startRadar() async {
       final epc = epcController.text.trim();
       if (epc.isEmpty) return;
@@ -340,22 +345,19 @@ class _FunctionsState extends State<Functions>
       await ChafonH103RfidService.startRadar(epc);
       setState(() {
         isRadarActive = true;
+        radarEpc = epc;
+        radarProgress = 0;
+        radarColor = Colors.grey;
+        lastRadarEpc = '';
       });
-
-      ChafonH103RfidService.initCallbacks(
-        onTagRead: (_) {},
-        onRadarResult: (tag) {
-          final epc = tag['epc'] ?? '';
-          final rssi = tag['rssi'] ?? -99;
-          handleRadar(epc, rssi);
-        },
-      );
+      // DİQQƏT: Burada initCallbacks ÇAĞIRMIRIQ – artıq initState-də verilib.
     }
 
     Future<void> stopRadar() async {
       await ChafonH103RfidService.stopRadar();
       setState(() {
         isRadarActive = false;
+        radarEpc = '';
         radarProgress = 0;
         radarColor = Colors.grey;
         lastRadarEpc = '';
@@ -404,21 +406,18 @@ class _FunctionsState extends State<Functions>
     );
   }
 
-  Widget _buildSettingsTab() {
+  Widget _buildSettingsTab(String powLabel) {
     return Padding(
       padding: const EdgeInsets.all(12.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "📶 Output Power",
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          Text("📶 Output Power ($powLabel dBm)", style: const TextStyle(fontWeight: FontWeight.bold)),
           Slider(
-            value: outputPower?.toDouble() ?? 20,
-            min: 1,
+            value: (outputPower ?? 20).toDouble(),
+            min: 5,
             max: 33,
-            divisions: 32,
+            divisions: 28, // 5..33
             label: '${outputPower?.toInt() ?? 20} dBm',
             onChanged: (value) => setState(() => outputPower = value.toInt()),
           ),
@@ -435,20 +434,20 @@ class _FunctionsState extends State<Functions>
             },
             child: const Text("🔋 Check Battery"),
           ),
+          const SizedBox(height: 16),
           Text(log),
+          const SizedBox(height: 16),
           ElevatedButton.icon(
             icon: const Icon(Icons.link_off),
             label: const Text("Disconnect"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {
               await ChafonH103RfidService.disconnect();
               if (context.mounted) {
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(builder: (_) => const DeviceScanScreen()),
-                      (route) => false, // bütün əvvəlki səhifələri sil
+                      (route) => false,
                 );
               }
             },

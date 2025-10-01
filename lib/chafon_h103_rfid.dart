@@ -20,39 +20,32 @@ class ChafonH103RfidService {
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
         case 'onTagRead':
-          if (onTagRead != null)
-            onTagRead(Map<String, dynamic>.from(call.arguments));
+          if (onTagRead != null) onTagRead(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onTagReadSingle':
-          if (onTagReadSingle != null)
-            onTagReadSingle(Map<String, dynamic>.from(call.arguments));
+          if (onTagReadSingle != null) onTagReadSingle(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onRadarSignal':
-          if (onRadarResult != null)
-            onRadarResult(Map<String, dynamic>.from(call.arguments));
+          if (onRadarResult != null) onRadarResult(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onBatteryLevel':
-          if (onBatteryLevel != null)
-            onBatteryLevel(Map<String, dynamic>.from(call.arguments));
+          if (onBatteryLevel != null) onBatteryLevel(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onBatteryTimeout':
           if (onBatteryTimeout != null) onBatteryTimeout();
           break;
         case 'onReadError':
-          if (onReadError != null)
-            onReadError(Map<String, dynamic>.from(call.arguments));
+          if (onReadError != null) onReadError(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onDisconnected':
           if (onDisconnected != null) onDisconnected();
           break;
         case 'onDeviceFound':
-          if (onDeviceFound != null)
-            onDeviceFound(Map<String, dynamic>.from(call.arguments));
+          if (onDeviceFound != null) onDeviceFound(Map<String, dynamic>.from(call.arguments));
           break;
         case 'onFlashSaved':
           if (onFlashSaved != null) onFlashSaved();
           break;
-
         case 'onScanError':
           if (onScanError != null) onScanError(call.arguments as String);
           break;
@@ -60,7 +53,14 @@ class ChafonH103RfidService {
     });
   }
 
-  // Metodlar
+  /// Helper: gücü 5..33 aralığında saxla, 0 gələrsə 6 et
+  static int _normalizePower(int power) {
+    final p = (power == 0 ? 6 : power);
+    return p.clamp(5, 33).toInt();
+  }
+
+  // ========== Metodlar ==========
+
   static Future<String?> getPlatformVersion() async {
     return await _channel.invokeMethod<String>('getPlatformVersion');
   }
@@ -90,36 +90,56 @@ class ChafonH103RfidService {
   }
 
   static Future<Map<String, int>> getAllDeviceConfig() async {
-    final result = await _channel.invokeMethod<Map>("getAllDeviceConfig");
-    return result?.map(
-          (key, value) => MapEntry(key.toString(), value as int),
-        ) ??
-        {};
+    final result = await _channel.invokeMethod<Map>('getAllDeviceConfig');
+    return result?.map((key, value) => MapEntry(key.toString(), value as int)) ?? {};
   }
 
-
-  static Future<String?> sendAndSaveAllParams({required int power}) async {
+  /// YENİ: Yalnız gücü yazan sadə API (native: setOnlyOutputPower)
+  /// [saveToFlash]=true -> FLASH-a saxlayır, [resumeInventory]=true -> inventory işləyirdisə bərpa edir
+  static Future<String?> setOnlyOutputPower({
+    required int power,
+    bool saveToFlash = true,
+    bool resumeInventory = false,
+  }) async {
+    final int p = _normalizePower(power);
     try {
-      final result = await _channel.invokeMethod<String>('sendAndSaveAllParams', {
-        'power': power,
-        'region': 2,
-        'qValue': 4,
-        'session': 0,
+      final res = await _channel.invokeMethod<String>('setOnlyOutputPower', {
+        'power': p,
+        'saveToFlash': saveToFlash,
+        'resumeInventory': resumeInventory,
       });
-      debugPrint("sendAndSaveAllParams: $result");
-      debugPrint("sendAndSaveAllParams: $power");
-      return result;
+      debugPrint('setOnlyOutputPower: $res (p=$p save=$saveToFlash resume=$resumeInventory)');
+      return res; // "ok" | "flash_saved"
     } catch (e) {
-      debugPrint("sendAndSaveAllParams error: $e");
+      debugPrint('setOnlyOutputPower error: $e');
       return null;
-}
+    }
   }
 
+  /// Tam konfiqi yazan API. Artıq default olaraq YALNIZ power göndəririk.
+  /// (Native tərəf region/q/session üçün defaultları özü qurur.)
+  static Future<String?> sendAndSaveAllParams({required int power}) async {
+    final int p = _normalizePower(power);
+    try {
+      final result = await _channel.invokeMethod<String>(
+        'sendAndSaveAllParams',
+        {'power': p}, // region/qValue/session göndərmirik
+      );
+      debugPrint('sendAndSaveAllParams: $result (p=$p)');
+      return result; // "flash_saved" və s.
+    } catch (e) {
+      debugPrint('sendAndSaveAllParams error: $e');
+      return null;
+    }
+  }
 
   static Future<String?> startInventory() async {
     return await _channel.invokeMethod<String>('startInventory');
   }
 
+  /// QEYD: Native tərəfdə 'startInventoryWithBank' yoxdursa, bunu istifadə etmə.
+  /// Əvəzinə readSingleTagFromBank(...) yaz.
+  @Deprecated('Native metodu yoxdursa istifadə etmə; readSingleTagFromBank istifadə et')
   static Future<String?> startInventoryWithBank(String memoryBank) async {
     return await _channel.invokeMethod<String>('startInventoryWithBank', {
       'memoryBank': memoryBank,
@@ -130,11 +150,17 @@ class ChafonH103RfidService {
     return await _channel.invokeMethod<String>('stopInventory');
   }
 
+  /// EPC oxumaq (default EPC bank: 0x01). Lazım olsa parametrli variantdan istifadə et.
   static Future<String?> readSingleTag() async {
-    int memoryBank = //(bank == 'TID') ? 0x02 :
-    0x01;
-    return await _channel.invokeMethod('readSingleTag', {
-      'memoryBank': memoryBank,
+    return await _channel.invokeMethod<String>('readSingleTag', {
+      'memoryBank': 0x01,
+    });
+  }
+
+  /// Parametrli tək oxu (EPC=0x01, TID=0x02, USER=0x03 ...)
+  static Future<String?> readSingleTagFromBank(int memBank) async {
+    return await _channel.invokeMethod<String>('readSingleTag', {
+      'memoryBank': memBank,
     });
   }
 
