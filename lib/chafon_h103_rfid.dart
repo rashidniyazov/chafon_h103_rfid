@@ -102,7 +102,7 @@ class ChafonH103RfidService {
     try {
       final result = await _channel.invokeMethod<String>('sendAndSaveAllParams', {
         'power': power,
-        'region': 1,
+        'region': 2,
         'qValue': 4,
         'session': 0,
       });
