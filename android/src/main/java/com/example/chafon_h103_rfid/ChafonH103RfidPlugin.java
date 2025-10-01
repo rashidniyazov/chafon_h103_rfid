@@ -145,14 +145,17 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                     Integer power = call.argument("power");
                     Boolean saveToFlash = call.argument("saveToFlash"); // default true
                     Boolean resumeInventory = call.argument("resumeInventory"); // default false
+                    Integer region = call.argument("region"); // <-- YENİ
 
                     int pwr = power != null ? power : 17;
                     boolean save = (saveToFlash == null) ? true : saveToFlash;
                     boolean resume = (resumeInventory == null) ? false : resumeInventory;
+                    int reg = (region == null) ? -1 : region; // -1 => region dəyişmə
 
-                    setOnlyOutputPower(pwr, save, resume, result);
+                    setOnlyOutputPower(pwr, save, resume, reg, result); // <-- imza dəyişdi
                     break;
                 }
+
 
                 case "startInventory":
                     startInventory(result);
@@ -616,8 +619,13 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
     }
 
     // ==== YENİ: Yalnız gücü yazan sadə API ====
-    private void setOnlyOutputPower(int power, boolean saveToFlash, boolean resumeInventory, MethodChannel.Result result) {
-        Log.d("CHAFON_PLUGIN", "⚙️ setOnlyOutputPower(power=" + power + ", save=" + saveToFlash + ", resume=" + resumeInventory + ")");
+    private void setOnlyOutputPower(int power,
+                                    boolean saveToFlash,
+                                    boolean resumeInventory,
+                                    int regionOrMinus1, // -1 gəlirsə region toxunmuruq
+                                    MethodChannel.Result result) {
+        Log.d("CHAFON_PLUGIN", "⚙️ setOnlyOutputPower(power=" + power + ", save=" + saveToFlash +
+                ", resume=" + resumeInventory + ", region=" + regionOrMinus1 + ")");
 
         if (!opInProgress.compareAndSet(false, true)) {
             result.error("BUSY", "Başqa əməliyyat gedir", null);
@@ -633,24 +641,30 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                 return;
             }
 
-            // Inventory işləyirdisə, dayandır
             if (wasRunning) {
                 internalStopInventory();
                 try { Thread.sleep(150); } catch (InterruptedException ignored) {}
             }
 
-            // Param obyektini hazırla / yenilə
             if (latestAllParam == null) {
-                latestAllParam = makeAllParamsFromDefaults(power, /*region*/2, /*q*/4, /*session*/0);
+                // latestAllParam yoxdursa: region verilibsə onu, verilməyibsə default ETSI(2)
+                int effectiveRegion = (regionOrMinus1 == -1) ? 2 : regionOrMinus1;
+                latestAllParam = makeAllParamsFromDefaults(power, effectiveRegion, /*q*/4, /*session*/0);
             } else {
                 int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
                 latestAllParam.mRfidPower = (byte) p;
+
+                // region paramı verilmişdisə, tezlik cədvəlini də yenilə
+                if (regionOrMinus1 != -1) {
+                    latestAllParam.mRfidFreq = buildFreqByRegion(regionOrMinus1);
+                }
             }
 
             // RAM-a yaz
             byte[] cmd = CmdBuilder.buildSetAllParamCmd(latestAllParam);
             boolean sent = writeWithRetry(SERVICE_UUID, WRITE_UUID, cmd);
             if (!sent) {
+                if (resumeInventory && wasRunning) internalStartInventory();
                 opInProgress.set(false);
                 result.error("WRITE_FAILED", "Parametrlər RAM-a yazılmadı", null);
                 return;
@@ -659,43 +673,34 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
             if (saveToFlash) {
                 saveParamsToFlash(new MethodChannel.Result() {
                     @Override public void success(Object res) {
-                        if (resumeInventory && wasRunning) {
-                            internalStartInventory();
-                        }
+                        if (resumeInventory && wasRunning) internalStartInventory();
                         opInProgress.set(false);
                         result.success(res); // "flash_saved"
                     }
                     @Override public void error(String code, String msg, Object details) {
-                        if (resumeInventory && wasRunning) {
-                            internalStartInventory();
-                        }
+                        if (resumeInventory && wasRunning) internalStartInventory();
                         opInProgress.set(false);
                         result.error(code, msg, details);
                     }
                     @Override public void notImplemented() {
-                        if (resumeInventory && wasRunning) {
-                            internalStartInventory();
-                        }
+                        if (resumeInventory && wasRunning) internalStartInventory();
                         opInProgress.set(false);
                         result.notImplemented();
                     }
                 });
             } else {
-                if (resumeInventory && wasRunning) {
-                    internalStartInventory();
-                }
+                if (resumeInventory && wasRunning) internalStartInventory();
                 opInProgress.set(false);
                 result.success("ok");
             }
 
         } catch (Exception e) {
-            if (resumeInventory && wasRunning) {
-                internalStartInventory();
-            }
+            if (resumeInventory && wasRunning) internalStartInventory();
             opInProgress.set(false);
             result.error("SET_POWER_EXCEPTION", e.getMessage(), null);
         }
     }
+
 
     // ==== ƏSAS DƏYİŞİKLİK: getAllDeviceConfig-siz də işləyən versiya ====
     private void sendAndSaveAllParams(int power, int region, int qValue, int session, MethodChannel.Result result) {

@@ -13,3 +13,9 @@
 
 ## 0.1.4
 - Change sendAndSaveAllParams method
+
+## 0.1.6
+- Change sendAndSaveAllParams method
+
+## 0.1.6
+- Change again sendAndSaveAllParams method

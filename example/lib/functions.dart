@@ -102,6 +102,7 @@ class _FunctionsState extends State<Functions> with SingleTickerProviderStateMix
         power: power,
         saveToFlash: true,
         resumeInventory: false,
+        region: 2
       );
 
       if (!mounted) return;

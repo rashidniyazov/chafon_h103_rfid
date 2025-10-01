@@ -1,6 +1,6 @@
 name: chafon_h103_rfid
 description: Chafon H103 Bluetooth RFID reader Flutter plugin.
-version: 0.1.4
+version: 0.1.6
 homepage: https://github.com/rashidniyazov/chafon_h103_rfid
 repository: https://github.com/rashidniyazov/chafon_h103_rfid
 issue_tracker: https://github.com/rashidniyazov/chafon_h103_rfid/issues

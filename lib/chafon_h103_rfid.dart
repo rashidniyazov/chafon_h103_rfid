@@ -100,6 +100,7 @@ class ChafonH103RfidService {
     required int power,
     bool saveToFlash = true,
     bool resumeInventory = false,
+    int? region,
   }) async {
     final int p = _normalizePower(power);
     try {
@@ -107,8 +108,9 @@ class ChafonH103RfidService {
         'power': p,
         'saveToFlash': saveToFlash,
         'resumeInventory': resumeInventory,
+        if (region != null) 'region': region, // <-- YENİ
       });
-      debugPrint('setOnlyOutputPower: $res (p=$p save=$saveToFlash resume=$resumeInventory)');
+      debugPrint('setOnlyOutputPower: $res (p=$p save=$saveToFlash resume=$resumeInventory region=$region)');
       return res; // "ok" | "flash_saved"
     } catch (e) {
       debugPrint('setOnlyOutputPower error: $e');
@@ -116,22 +118,34 @@ class ChafonH103RfidService {
     }
   }
 
+
   /// Tam konfiqi yazan API. Artıq default olaraq YALNIZ power göndəririk.
   /// (Native tərəf region/q/session üçün defaultları özü qurur.)
-  static Future<String?> sendAndSaveAllParams({required int power}) async {
+  static Future<String?> sendAndSaveAllParams({
+    required int power,
+    int region = 2,
+    int qValue = 4,
+    int session = 0,
+  }) async {
     final int p = _normalizePower(power);
     try {
       final result = await _channel.invokeMethod<String>(
         'sendAndSaveAllParams',
-        {'power': p}, // region/qValue/session göndərmirik
+        {
+          'power': p,
+          'region': region,   // <-- YENİ
+          'qValue': qValue,
+          'session': session,
+        },
       );
-      debugPrint('sendAndSaveAllParams: $result (p=$p)');
+      debugPrint('sendAndSaveAllParams: $result (p=$p region=$region q=$qValue s=$session)');
       return result; // "flash_saved" və s.
     } catch (e) {
       debugPrint('sendAndSaveAllParams error: $e');
       return null;
     }
   }
+
 
   static Future<String?> startInventory() async {
     return await _channel.invokeMethod<String>('startInventory');
