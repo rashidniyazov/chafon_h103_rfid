@@ -265,6 +265,8 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
                     case CmdType.TYPE_INVENTORY: {
                         if (obj instanceof TagInfoBean) {
+                            if (!inventoryRunning) inventoryRunning = true;
+
                             TagInfoBean tag = (TagInfoBean) obj;
                             if (tag.mEPCNum == null || tag.mEPCNum.length == 0) return;
 
@@ -384,13 +386,13 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
             // START INVENTORY ack (0x01, len=0x01, status byte)
             if (cmd == 0x01 && len == 0x01 && bytes.length >= 6) {
-                int status = bytes[5] & 0xFF; // 0x00=OK
-                if (status == 0x00) {
-                    Log.d("CHAFON_PLUGIN", "✅ Inventory START ack (OK)");
+                int status = bytes[5] & 0xFF;
+                // 0x00 = OK, 0x12 = already running/accepted (tez-tez), 0x02 = "param OK, stream başlayır" kimi davranan bəzi FW-lər var
+                if (status == 0x00 || status == 0x12 || status == 0x02) {
+                    Log.d("CHAFON_PLUGIN", "✅ Inventory START ack (status=0x" + Integer.toHexString(status) + ")");
                     inventoryRunning = true;
                 } else {
                     Log.w("CHAFON_PLUGIN", "❌ Inventory START ack status=0x" + Integer.toHexString(status));
-                    inventoryRunning = false;
                 }
                 return;
             }
@@ -538,13 +540,17 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
     private void configureAfterConnection(MethodChannel.Result result) {
         try {
-            // Rəsmi app kimi: qoşulandan sonra xüsusi 0x88/0x8E göndərmirik
             bleReady = true;
+            // 🔽 Qoşulan kimi konfiqi oxu (asinxron, cavab notify-dən gələcək və latestAllParam dolacaq)
+            byte[] cmd = CmdBuilder.buildGetAllParamCmd();
+            writeWithRetry(SERVICE_UUID, WRITE_UUID, cmd);
+
             result.success(true);
         } catch (Exception e) {
             result.error("CONFIGURATION_FAILED", "Config error: " + e.getMessage(), null);
         }
     }
+
 
     private void disconnect(MethodChannel.Result result) {
         try {
@@ -622,13 +628,14 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
     private void setOnlyOutputPower(int power,
                                     boolean saveToFlash,
                                     boolean resumeInventory,
-                                    int regionOrMinus1, // -1 gəlirsə region toxunmuruq
+                                    int regionOrMinus1,
                                     MethodChannel.Result result) {
         Log.d("CHAFON_PLUGIN", "⚙️ setOnlyOutputPower(power=" + power + ", save=" + saveToFlash +
                 ", resume=" + resumeInventory + ", region=" + regionOrMinus1 + ")");
 
-        if (!opInProgress.compareAndSet(false, true)) {
-            result.error("BUSY", "Başqa əməliyyat gedir", null);
+        // 1) Bazis konfiq mütləq lazımdır (qoşulanda oxunur)
+        if (latestAllParam == null) {
+            result.error("NO_BASE_CONFIG", "Əvvəlcə getAllDeviceConfig çağırılmalıdır (baseline yoxdur)", null);
             return;
         }
 
@@ -636,70 +643,57 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
 
         try {
             if (!waitBleReady(1000) || bleCore == null || !bleCore.isConnect()) {
-                opInProgress.set(false);
                 result.error("BLE_NOT_READY", "Cihaz qoşulu deyil və ya notify hazır deyil", null);
                 return;
             }
 
+            // 2) Inventory işləyirdisə, qısa STOP
             if (wasRunning) {
                 internalStopInventory();
                 try { Thread.sleep(150); } catch (InterruptedException ignored) {}
             }
 
-            if (latestAllParam == null) {
-                // latestAllParam yoxdursa: region verilibsə onu, verilməyibsə default ETSI(2)
-                int effectiveRegion = (regionOrMinus1 == -1) ? 2 : regionOrMinus1;
-                latestAllParam = makeAllParamsFromDefaults(power, effectiveRegion, /*q*/4, /*session*/0);
-            } else {
-                int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
-                latestAllParam.mRfidPower = (byte) p;
+            // 3) Yalnız power dəyiş, region-u MÜTLƏQ EU(2) qur
+            int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
+            latestAllParam.mRfidPower = (byte) p;
+            latestAllParam.mRfidFreq  = buildFreqByRegion(2); // EU/ETSI sabit 2
 
-                // region paramı verilmişdisə, tezlik cədvəlini də yenilə
-                if (regionOrMinus1 != -1) {
-                    latestAllParam.mRfidFreq = buildFreqByRegion(regionOrMinus1);
-                }
-            }
-
-            // RAM-a yaz
+            // 4) RAM-a yaz
             byte[] cmd = CmdBuilder.buildSetAllParamCmd(latestAllParam);
             boolean sent = writeWithRetry(SERVICE_UUID, WRITE_UUID, cmd);
             if (!sent) {
                 if (resumeInventory && wasRunning) internalStartInventory();
-                opInProgress.set(false);
                 result.error("WRITE_FAILED", "Parametrlər RAM-a yazılmadı", null);
                 return;
             }
 
+            // 5) (İstəyə bağlı) FLASH
             if (saveToFlash) {
                 saveParamsToFlash(new MethodChannel.Result() {
                     @Override public void success(Object res) {
                         if (resumeInventory && wasRunning) internalStartInventory();
-                        opInProgress.set(false);
                         result.success(res); // "flash_saved"
                     }
                     @Override public void error(String code, String msg, Object details) {
                         if (resumeInventory && wasRunning) internalStartInventory();
-                        opInProgress.set(false);
                         result.error(code, msg, details);
                     }
                     @Override public void notImplemented() {
                         if (resumeInventory && wasRunning) internalStartInventory();
-                        opInProgress.set(false);
                         result.notImplemented();
                     }
                 });
             } else {
                 if (resumeInventory && wasRunning) internalStartInventory();
-                opInProgress.set(false);
                 result.success("ok");
             }
 
         } catch (Exception e) {
             if (resumeInventory && wasRunning) internalStartInventory();
-            opInProgress.set(false);
             result.error("SET_POWER_EXCEPTION", e.getMessage(), null);
         }
     }
+
 
 
     // ==== ƏSAS DƏYİŞİKLİK: getAllDeviceConfig-siz də işləyən versiya ====
@@ -720,23 +714,23 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                 return;
             }
 
-            // Inventory işləyirdisə, dayandır
             if (wasRunning) {
                 internalStopInventory();
                 try { Thread.sleep(150); } catch (InterruptedException ignored) {}
             }
 
             if (latestAllParam == null) {
-                latestAllParam = makeAllParamsFromDefaults(power, region, qValue, session); // <<< burda region istifadə olundu
-            } else {
-                int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
-                latestAllParam.mRfidPower = (byte) p;
-                latestAllParam.mQValue    = (byte) qValue;
-                latestAllParam.mSession   = (byte) session;
-                latestAllParam.mRfidFreq  = buildFreqByRegion(region); // <<< burda da!
+                opInProgress.set(false);
+                result.error("NO_BASE_CONFIG", "Əvvəlcə getAllDeviceConfig çağırılmalıdır (baseline yoxdur)", null);
+                return;
             }
 
-            // RAM-a yaz
+            int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
+            latestAllParam.mRfidPower = (byte) p;
+            latestAllParam.mQValue    = (byte) qValue;
+            latestAllParam.mSession   = (byte) session;
+            latestAllParam.mRfidFreq  = buildFreqByRegion(2); // region sabit EU
+
             byte[] cmd = CmdBuilder.buildSetAllParamCmd(latestAllParam);
             boolean sent = writeWithRetry(SERVICE_UUID, WRITE_UUID, cmd);
             if (!sent) {
@@ -746,12 +740,11 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                 return;
             }
 
-            // FLASH-a saxla
             saveParamsToFlash(new MethodChannel.Result() {
                 @Override public void success(Object res) {
                     if (wasRunning) internalStartInventory();
                     opInProgress.set(false);
-                    result.success(res); // "flash_saved"
+                    result.success(res);
                 }
                 @Override public void error(String code, String msg, Object details) {
                     if (wasRunning) internalStartInventory();
@@ -771,6 +764,7 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
             result.error("WRITE_EXCEPTION", "Xəta baş verdi: " + e.getMessage(), null);
         }
     }
+
 
     // ==== Helper-lər ====
 
@@ -813,15 +807,15 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
         return freq;
     }
 
-    private AllParamBean makeAllParamsFromDefaults(int power, int region, int qValue, int session) {
-        AllParamBean b = new AllParamBean();
-        int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
-        b.mRfidPower = (byte) p;
-        b.mQValue    = (byte) qValue;   // default 4
-        b.mSession   = (byte) session;  // default 0 (S0)
-        b.mRfidFreq  = buildFreqByRegion(region);
-        return b;
-    }
+//    private AllParamBean makeAllParamsFromDefaults(int power, int region, int qValue, int session) {
+//        AllParamBean b = new AllParamBean();
+//        int p = Math.max(POWER_MIN, Math.min(POWER_MAX, power));
+//        b.mRfidPower = (byte) p;
+//        b.mQValue    = (byte) qValue;   // default 4
+//        b.mSession   = (byte) session;  // default 0 (S0)
+//        b.mRfidFreq  = buildFreqByRegion(region);
+//        return b;
+//    }
 
     private int calculateCRC16(byte[] data, int length) {
         int crc = 0xFFFF;
@@ -838,25 +832,36 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
         return crc;
     }
 
+    private byte[] buildStartInventoryRaw() {
+        // CF FF 00 01 05 00 00 00 00 00 CRC  (default app kimi)
+        byte[] cmd = new byte[]{ (byte)0xCF, (byte)0xFF, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        int crc = calculateCRC16(cmd, 10);
+        cmd[10] = (byte)((crc >> 8) & 0xFF);
+        cmd[11] = (byte)(crc & 0xFF);
+        return cmd;
+    }
+
     private void startInventory(MethodChannel.Result result) {
         if (!bleReady || bleCore == null || !bleCore.isConnect()) {
             result.error("BLE_NOT_READY", "Notify/connection hazır deyil", null);
             return;
         }
-        if (!opInProgress.compareAndSet(false, true)) {
-            result.error("BUSY", "Başqa əməliyyat gedir", null);
-            return;
-        }
 
         new Thread(() -> {
             try {
-                // 1) Ehtiyat üçün STOP (0x02)
+                // Həmişə STOP göndər
                 writeWithRetry(SERVICE_UUID, WRITE_UUID, CmdBuilder.buildStopInventoryCmd());
                 try { Thread.sleep(120); } catch (InterruptedException ignored) {}
 
-                // 2) START (0x01) – rəsmi app kimi, read-mode/out-mode dəyişmirik
-                byte[] invCmd = CmdBuilder.buildInventoryISOContinueCmd((byte) 0x00, 0);
+                // 1) SDK helper ilə cəhd
+                byte[] invCmd = CmdBuilder.buildInventoryISOContinueCmd((byte)0x00, 0);
                 boolean ok = writeWithRetry(SERVICE_UUID, WRITE_UUID, invCmd);
+
+                // 2) Helper alınmadısa RAW ilə ikinci cəhd
+                if (!ok) {
+                    ok = writeWithRetry(SERVICE_UUID, WRITE_UUID, buildStartInventoryRaw());
+                }
+
                 if (ok) inventoryRunning = true;
 
                 final boolean okFinal = ok;
@@ -869,11 +874,11 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
                 new Handler(Looper.getMainLooper()).post(
                         () -> result.error("INVENTORY_EXCEPTION", e.getMessage(), null)
                 );
-            } finally {
-                opInProgress.set(false);
             }
         }).start();
     }
+
+
 
     private void stopInventory(MethodChannel.Result result) {
         try {
@@ -894,11 +899,14 @@ public class ChafonH103RfidPlugin implements FlutterPlugin, MethodChannel.Method
     private void internalStartInventory() {
         try {
             byte[] invCmd = CmdBuilder.buildInventoryISOContinueCmd((byte) 0x00, 0);
-            if (writeWithRetry(SERVICE_UUID, WRITE_UUID, invCmd)) {
-                inventoryRunning = true;
+            boolean ok = writeWithRetry(SERVICE_UUID, WRITE_UUID, invCmd);
+            if (!ok) {
+                ok = writeWithRetry(SERVICE_UUID, WRITE_UUID, buildStartInventoryRaw());
             }
+            if (ok) inventoryRunning = true;
         } catch (Exception ignore) {}
     }
+
 
     private void internalStopInventory() {
         try {
